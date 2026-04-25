@@ -1,0 +1,9 @@
+[submodule "external/openqmc"]
+	path = external/openqmc
+	url = https://github.com/AcademySoftwareFoundation/openqmc.git
+[submodule "external/fcpw"]
+	path = external/fcpw
+	url = https://github.com/rohan-sawhney/fcpw.git
+[submodule "external/zombie"]
+	path = external/zombie
+	url = https://github.com/rohan-sawhney/zombie.git

@@ -1,0 +1,19 @@
+# Build outputs
+build/
+out/
+results/*.csv
+results/*.png
+*.exe
+*.pdb
+*.obj
+*.o
+*.ilk
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Python
+__pycache__/
+.venv/
