@@ -31,7 +31,8 @@ inline std::vector<Method> parse_method_list(const std::string& s) {
     for (const auto& item : split_csv(s)) {
         if (item == "all") {
             return {Method::MC, Method::PathwiseRQMC, Method::StepRQMCNoSort,
-                    Method::FullSortArrayRQMC, Method::BucketedRQMC};
+                    Method::FullSortArrayRQMC, Method::BucketedRQMC,
+                    Method::BlockBucketedRQMC};
         }
         Method m;
         if (!parse_method(item, m)) {
@@ -48,6 +49,7 @@ R"(mixed_boundary_benchmark options:
   --out PATH                 summary CSV path [results/summary.csv]
   --out-trials PATH          optional per-trial CSV path
   --methods LIST             comma list: all,mc,pathwise,step,full,bucket,block-bucket [all]
+  --qmc-backend NAME         simple,openqmc-sobol [simple]
   --ks LIST                  comma list of k values [1,4,8,16]
   --N INT                    walkers per estimate [1024]
   --M INT                    independent randomizations [128]
@@ -84,6 +86,11 @@ inline Config parse_args(int argc, char** argv) {
             cfg.outTrials = need_value(arg);
         } else if (arg == "--methods") {
             cfg.methods = parse_method_list(need_value(arg));
+        } else if (arg == "--qmc-backend") {
+            const auto value = need_value(arg);
+            if (!parse_qmc_backend(value, cfg.qmcBackend)) {
+                throw std::runtime_error("unknown qmc backend: " + value);
+            }
         } else if (arg == "--ks") {
             cfg.ks = parse_int_list(need_value(arg));
         } else if (arg == "--N") {

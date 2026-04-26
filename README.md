@@ -43,7 +43,7 @@ The homogeneous Neumann boundaries are handled by reflection/unfolding, so the a
 - `bucketed-rqmc`: proposed lightweight state-grouped RQMC using boundary side, boundary phase and distance buckets.
 - `block-bucketed-rqmc`: CPU simulation of GPU-style block-local grouping.
 
-The current QMC engine is intentionally dependency-free. It uses shifted Halton/van der Corput / simple rank-1 lattice style points. OpenQMC can be added later as a higher-quality sampler backend.
+The default `simple` QMC backend is dependency-free. For fairer paper experiments, build with `-DWOST_TOY_USE_OPENQMC=ON` and run with `--qmc-backend openqmc-sobol`, which routes all RQMC methods through the same Owen-scrambled Sobol backend. This lets us compare scheduling/grouping rather than Halton vs. VdC/lattice point-set differences.
 
 ## Build on Windows
 
@@ -58,6 +58,15 @@ cmake --build build --config Release
 
 ```powershell
 .\build\Release\mixed_boundary_benchmark.exe --methods all --ks 1,4,8,16 --N 1024 --M 128 --out results\summary.csv --out-trials results\trials.csv
+```
+
+OpenQMC Sobol build, after initializing the submodule:
+
+```powershell
+git submodule update --init --recursive external/openqmc
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWOST_TOY_USE_OPENQMC=ON
+cmake --build build --config Release
+.\build\Release\mixed_boundary_benchmark.exe --qmc-backend openqmc-sobol --methods mc,pathwise,step,full,bucket,block-bucket --ks 1,4,8,16 --N 1024 --M 512 --x0 0.65 --y0 0.37 --phase-bins 16 --block-size 128 --out results\summary_x065_M512_openqmc_sobol.csv --out-trials results\trials_x065_M512_openqmc_sobol.csv
 ```
 
 Generate plots:
@@ -85,6 +94,7 @@ python scripts/plot_results.py results/summary.csv --out-dir results/plots
 
 ```text
 --methods all,mc,pathwise,step,full,bucket,block-bucket
+--qmc-backend simple,openqmc-sobol
 --ks 1,4,8,16
 --N 1024
 --M 128
@@ -109,5 +119,5 @@ python scripts/plot_results.py results/summary.csv --out-dir results/plots
 - Sweep `phaseBins={4,8,16,32,64}`.
 - Add `groupEvery={1,2,4,8}`.
 - Add block-local grouping experiments with `blockSize={32,64,128,256,512}`.
-- Replace the dependency-free QMC engine with OpenQMC as an optional backend.
+- Compare `simple` and `openqmc-sobol` backends; use OpenQMC Sobol for final method comparisons.
 - Add a 2D polygon/FCPW backend after the toy results stabilize.

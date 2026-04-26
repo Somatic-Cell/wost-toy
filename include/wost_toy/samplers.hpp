@@ -22,7 +22,7 @@ public:
     virtual void begin_trial(int trial, uint64_t seed, const Config& cfg) {
         trial_ = trial;
         seed_ = seed;
-        (void)cfg;
+        qmc_ = QmcEngine(cfg.qmcBackend, seed);
     }
     virtual void assign(int step,
                         const MixedStripDomain& domain,
@@ -33,6 +33,7 @@ public:
 protected:
     int trial_ = 0;
     uint64_t seed_ = 0;
+    QmcEngine qmc_{};
 };
 
 class MCSampler final : public StepSampler {
@@ -55,11 +56,11 @@ class PathwiseRQMCSampler final : public StepSampler {
 public:
     const char* name() const override { return "pathwise-rqmc"; }
     void assign(int step, const MixedStripDomain&, const Config&, std::vector<WalkerState>& walkers, std::vector<double>& u_dir) override {
-        const double shift = hashed_unit(seed_, 0x1000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
+        const uint64_t domain = qmc_domain_key(seed_, 0x1000u, static_cast<uint64_t>(trial_));
         for (std::size_t i = 0; i < walkers.size(); ++i) {
             if (walkers[i].alive) {
-                // Fixed walker index drives the path dimension. This is a cheap pathwise RQMC baseline.
-                u_dir[i] = pathwise_halton_sample(static_cast<uint64_t>(i), step, shift);
+                // Pathwise baseline: one high-dimensional QMC point per walker.
+                u_dir[i] = qmc_.sample1D(QmcAddress{domain, static_cast<uint64_t>(i), static_cast<uint32_t>(step)});
             }
         }
     }
@@ -69,11 +70,11 @@ class StepRQMCNoSortSampler final : public StepSampler {
 public:
     const char* name() const override { return "step-rqmc-no-sort"; }
     void assign(int step, const MixedStripDomain&, const Config&, std::vector<WalkerState>& walkers, std::vector<double>& u_dir) override {
-        const double shift = hashed_unit(seed_, 0x2000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
+        const uint64_t domain = qmc_domain_key(seed_, 0x2000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
         uint64_t local = 0;
         for (std::size_t i = 0; i < walkers.size(); ++i) {
             if (walkers[i].alive) {
-                u_dir[i] = rqmc_1d(local++, shift);
+                u_dir[i] = qmc_.sample1D(QmcAddress{domain, local++, 0u});
             }
         }
     }
@@ -85,9 +86,9 @@ public:
     void assign(int step, const MixedStripDomain& domain, const Config& cfg, std::vector<WalkerState>& walkers, std::vector<double>& u_dir) override {
         if (cfg.groupEvery > 1 && (step % cfg.groupEvery) != 0) {
             // Cheap fallback between grouping steps.
-            const double shift = hashed_unit(seed_, 0x2F00u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
+            const uint64_t domainKey = qmc_domain_key(seed_, 0x2F00u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
             for (std::size_t i = 0; i < walkers.size(); ++i) {
-                if (walkers[i].alive) u_dir[i] = rqmc_1d(static_cast<uint64_t>(i), shift);
+                if (walkers[i].alive) u_dir[i] = qmc_.sample1D(QmcAddress{domainKey, static_cast<uint64_t>(i), 0u});
             }
             return;
         }
@@ -105,10 +106,9 @@ public:
 
         const std::size_t n = active_.size();
         points_.resize(n);
-        const double shift0 = hashed_unit(seed_, 0x3000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step), 0);
-        const double shift1 = hashed_unit(seed_, 0x3001u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step), 1);
+        const uint64_t domainKey = qmc_domain_key(seed_, 0x3000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
         for (std::size_t j = 0; j < n; ++j) {
-            points_[j] = rqmc_2d(static_cast<uint64_t>(j), shift0, shift1);
+            points_[j] = qmc_.sample2D(QmcAddress{domainKey, static_cast<uint64_t>(j), 0u});
         }
         std::sort(points_.begin(), points_.end(), [](const Point2& a, const Point2& b) {
             return a.x < b.x;
@@ -129,9 +129,9 @@ public:
 
     void assign(int step, const MixedStripDomain& domain, const Config& cfg, std::vector<WalkerState>& walkers, std::vector<double>& u_dir) override {
         if (cfg.groupEvery > 1 && (step % cfg.groupEvery) != 0) {
-            const double shift = hashed_unit(seed_, 0x3F00u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
+            const uint64_t domainKey = qmc_domain_key(seed_, 0x3F00u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
             for (std::size_t i = 0; i < walkers.size(); ++i) {
-                if (walkers[i].alive) u_dir[i] = rqmc_1d(static_cast<uint64_t>(i), shift);
+                if (walkers[i].alive) u_dir[i] = qmc_.sample1D(QmcAddress{domainKey, static_cast<uint64_t>(i), 0u});
             }
             return;
         }
@@ -173,10 +173,10 @@ private:
         for (std::size_t b = 0; b < buckets.size(); ++b) {
             const auto& indices = buckets[b];
             if (indices.empty()) continue;
-            const double shift = hashed_unit(seed_, 0x4000u + block, static_cast<uint64_t>(trial_),
-                                             static_cast<uint64_t>(step), static_cast<uint64_t>(b));
+            const uint64_t domainKey = qmc_domain_key(seed_, 0x4000u + block, static_cast<uint64_t>(trial_),
+                                                      static_cast<uint64_t>(step), static_cast<uint64_t>(b));
             for (std::size_t j = 0; j < indices.size(); ++j) {
-                u_dir[static_cast<std::size_t>(indices[j])] = rqmc_1d(static_cast<uint64_t>(j), shift);
+                u_dir[static_cast<std::size_t>(indices[j])] = qmc_.sample1D(QmcAddress{domainKey, static_cast<uint64_t>(j), 0u});
             }
         }
     }

@@ -40,11 +40,11 @@ inline void write_summary_csv(const std::string& path, const Config& cfg, const 
     std::ofstream out(path);
     if (!out) throw std::runtime_error("failed to open summary CSV: " + path);
 
-    out << "k,method,N,M,eps,x0,y0,phase_bins,dist_bins,group_every,block_size,exact,mean,bias,std,variance,rmse,"
+    out << "k,method,qmc_backend,N,M,eps,x0,y0,phase_bins,dist_bins,group_every,block_size,exact,mean,bias,std,variance,rmse,"
            "variance_ratio_vs_mc,mse_ratio_vs_mc,time_ms,time_ratio_vs_mc,work_ratio_vs_mc,mean_steps,mean_max_steps,mean_truncated\n";
     out << std::setprecision(17);
     for (const auto& r : rows) {
-        out << r.k << ',' << to_string(r.method) << ','
+        out << r.k << ',' << to_string(r.method) << ',' << to_string(cfg.qmcBackend) << ','
             << cfg.N << ',' << cfg.M << ',' << cfg.eps << ',' << cfg.x0 << ',' << cfg.y0 << ','
             << cfg.phaseBins << ',' << cfg.distBins << ',' << cfg.groupEvery << ',' << cfg.blockSize << ','
             << r.exact << ',' << r.stats.mean << ',' << r.stats.bias << ',' << r.stats.stddev << ','
@@ -56,7 +56,7 @@ inline void write_summary_csv(const std::string& path, const Config& cfg, const 
 }
 
 inline void write_trial_header(std::ofstream& out) {
-    out << "k,method,trial,estimate,exact,error,sq_error,mean_steps,max_steps_seen,truncated_count,time_ms\n";
+    out << "k,method,qmc_backend,trial,estimate,exact,error,sq_error,mean_steps,max_steps_seen,truncated_count,time_ms\n";
 }
 
 inline SummaryRow run_method(const Config& cfg,
@@ -96,7 +96,7 @@ inline SummaryRow run_method(const Config& cfg,
 
         if (trialsOut) {
             const double err = er.estimate - exact;
-            (*trialsOut) << k << ',' << to_string(method) << ',' << trial << ','
+            (*trialsOut) << k << ',' << to_string(method) << ',' << to_string(cfg.qmcBackend) << ',' << trial << ','
                          << std::setprecision(17) << er.estimate << ',' << exact << ',' << err << ',' << err * err << ','
                          << er.meanSteps << ',' << er.maxStepsSeen << ',' << er.truncatedCount << ',' << trialMs << '\n';
         }

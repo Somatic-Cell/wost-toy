@@ -1,0 +1,10 @@
+C:/Users/sy415/workspace/WoStToy/build-openqmc/CMakeFiles/mixed_boundary_benchmark.dir
+C:/Users/sy415/workspace/WoStToy/build-openqmc/CMakeFiles/INSTALL.dir
+C:/Users/sy415/workspace/WoStToy/build-openqmc/CMakeFiles/ALL_BUILD.dir
+C:/Users/sy415/workspace/WoStToy/build-openqmc/CMakeFiles/ZERO_CHECK.dir
+C:/Users/sy415/workspace/WoStToy/build-openqmc/external/openqmc/CMakeFiles/uninstall.dir
+C:/Users/sy415/workspace/WoStToy/build-openqmc/external/openqmc/CMakeFiles/INSTALL.dir
+C:/Users/sy415/workspace/WoStToy/build-openqmc/external/openqmc/CMakeFiles/ALL_BUILD.dir
+C:/Users/sy415/workspace/WoStToy/build-openqmc/external/openqmc/cmake/CMakeFiles/INSTALL.dir
+C:/Users/sy415/workspace/WoStToy/build-openqmc/external/openqmc/include/CMakeFiles/INSTALL.dir
+C:/Users/sy415/workspace/WoStToy/build-openqmc/external/openqmc/src/CMakeFiles/INSTALL.dir

@@ -15,6 +15,11 @@ enum class Method {
     BlockBucketedRQMC
 };
 
+enum class QmcBackendKind {
+    Simple,
+    OpenQmcSobol
+};
+
 inline std::string to_string(Method m) {
     switch (m) {
     case Method::MC: return "mc";
@@ -25,6 +30,21 @@ inline std::string to_string(Method m) {
     case Method::BlockBucketedRQMC: return "block-bucketed-rqmc";
     }
     return "unknown";
+}
+
+
+inline std::string to_string(QmcBackendKind b) {
+    switch (b) {
+    case QmcBackendKind::Simple: return "simple";
+    case QmcBackendKind::OpenQmcSobol: return "openqmc-sobol";
+    }
+    return "unknown";
+}
+
+inline bool parse_qmc_backend(const std::string& s, QmcBackendKind& out) {
+    if (s == "simple" || s == "legacy") { out = QmcBackendKind::Simple; return true; }
+    if (s == "openqmc-sobol" || s == "sobol" || s == "openqmc") { out = QmcBackendKind::OpenQmcSobol; return true; }
+    return false;
 }
 
 inline bool parse_method(const std::string& s, Method& out) {
@@ -43,6 +63,7 @@ struct Config {
     std::vector<int> ks{1, 4, 8, 16};
     std::vector<Method> methods{Method::MC, Method::PathwiseRQMC, Method::StepRQMCNoSort,
                                 Method::FullSortArrayRQMC, Method::BucketedRQMC};
+    QmcBackendKind qmcBackend = QmcBackendKind::Simple;
 
     double eps = 1e-4;
     int maxSteps = 10000;

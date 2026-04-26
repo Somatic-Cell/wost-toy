@@ -1,0 +1,10 @@
+^C:\USERS\SY415\WORKSPACE\WOSTTOY\BUILD-SIMPLE\CMAKEFILES\9813717636097A30E1ED582D64ECCE2A\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/Users/sy415/workspace/WoStToy -BC:/Users/sy415/workspace/WoStToy/build-simple --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/sy415/workspace/WoStToy/build-simple/wost_toy.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

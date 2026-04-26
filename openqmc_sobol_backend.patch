@@ -1,0 +1,456 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e27e9c4..1076a82 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -5,12 +5,28 @@ set(CMAKE_CXX_STANDARD 17)
+ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ set(CMAKE_CXX_EXTENSIONS OFF)
+ 
++option(WOST_TOY_USE_OPENQMC "Enable OpenQMC-backed QMC samplers" OFF)
++
+ add_executable(mixed_boundary_benchmark
+     experiments/mixed_boundary_benchmark.cpp
+ )
+ 
+ target_include_directories(mixed_boundary_benchmark PRIVATE include)
+ 
++if(WOST_TOY_USE_OPENQMC)
++    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/openqmc/CMakeLists.txt")
++        set(OPENQMC_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
++        set(OPENQMC_BUILD_TESTING OFF CACHE BOOL "" FORCE)
++        set(OPENQMC_ENABLE_BINARY OFF CACHE BOOL "" FORCE)
++        set(OPENQMC_ARCH_TYPE Scalar CACHE STRING "" FORCE)
++        add_subdirectory(external/openqmc EXCLUDE_FROM_ALL)
++        target_link_libraries(mixed_boundary_benchmark PRIVATE OpenQMC::OpenQMC)
++        target_compile_definitions(mixed_boundary_benchmark PRIVATE WOST_TOY_USE_OPENQMC=1)
++    else()
++        message(FATAL_ERROR "WOST_TOY_USE_OPENQMC=ON but external/openqmc is missing. Run: git submodule add https://github.com/AcademySoftwareFoundation/openqmc.git external/openqmc")
++    endif()
++endif()
++
+ if(MSVC)
+     target_compile_options(mixed_boundary_benchmark PRIVATE /W4 /permissive-)
+ else()
+diff --git a/README.md b/README.md
+index 32d08e0..fe3b6e3 100644
+--- a/README.md
++++ b/README.md
+@@ -111,3 +111,25 @@ python scripts/plot_results.py results/summary.csv --out-dir results/plots
+ - Add block-local grouping experiments with `blockSize={32,64,128,256,512}`.
+ - Replace the dependency-free QMC engine with OpenQMC as an optional backend.
+ - Add a 2D polygon/FCPW backend after the toy results stabilize.
++
++## Optional OpenQMC Sobol backend
++
++This prototype can be built with OpenQMC to compare all RQMC schedules using the same Owen-scrambled Sobol backend.
++
++```powershell
++git submodule add https://github.com/AcademySoftwareFoundation/openqmc.git external/openqmc
++git submodule update --init --recursive
++cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWOST_TOY_USE_OPENQMC=ON
++cmake --build build --config Release --parallel
++
++.\scripts\run_openqmc_sobol.ps1
++```
++
++The important distinction is not the Sobol implementation itself, but the scheduling:
++
++- `pathwise-rqmc`: one high-dimensional Sobol point per walk; the step id maps to Sobol dimensions.
++- `bucketed-rqmc`: one low-dimensional Sobol domain per `(trial, step, bucket)`.
++- `full-sort-array-rqmc`: a state-sorted oracle-style baseline using the same backend.
++- `step-rqmc-no-sort`: a negative baseline using the same backend without state matching.
++
++Use `--qmc-backend simple` to keep the dependency-free development backend, or `--qmc-backend openqmc-sobol` for the fair comparison.
+diff --git a/experiments/mixed_boundary_benchmark.cpp b/experiments/mixed_boundary_benchmark.cpp
+index 26319d2..3f584fd 100644
+--- a/experiments/mixed_boundary_benchmark.cpp
++++ b/experiments/mixed_boundary_benchmark.cpp
+@@ -40,11 +40,11 @@ inline void write_summary_csv(const std::string& path, const Config& cfg, const
+     std::ofstream out(path);
+     if (!out) throw std::runtime_error("failed to open summary CSV: " + path);
+ 
+-    out << "k,method,N,M,eps,x0,y0,phase_bins,dist_bins,group_every,block_size,exact,mean,bias,std,variance,rmse,"
++    out << "k,method,qmc_backend,N,M,eps,x0,y0,phase_bins,dist_bins,group_every,block_size,exact,mean,bias,std,variance,rmse,"
+            "variance_ratio_vs_mc,mse_ratio_vs_mc,time_ms,time_ratio_vs_mc,work_ratio_vs_mc,mean_steps,mean_max_steps,mean_truncated\n";
+     out << std::setprecision(17);
+     for (const auto& r : rows) {
+-        out << r.k << ',' << to_string(r.method) << ','
++        out << r.k << ',' << to_string(r.method) << ',' << to_string(cfg.qmcBackend) << ','
+             << cfg.N << ',' << cfg.M << ',' << cfg.eps << ',' << cfg.x0 << ',' << cfg.y0 << ','
+             << cfg.phaseBins << ',' << cfg.distBins << ',' << cfg.groupEvery << ',' << cfg.blockSize << ','
+             << r.exact << ',' << r.stats.mean << ',' << r.stats.bias << ',' << r.stats.stddev << ','
+@@ -56,7 +56,7 @@ inline void write_summary_csv(const std::string& path, const Config& cfg, const
+ }
+ 
+ inline void write_trial_header(std::ofstream& out) {
+-    out << "k,method,trial,estimate,exact,error,sq_error,mean_steps,max_steps_seen,truncated_count,time_ms\n";
++    out << "k,method,qmc_backend,trial,estimate,exact,error,sq_error,mean_steps,max_steps_seen,truncated_count,time_ms\n";
+ }
+ 
+ inline SummaryRow run_method(const Config& cfg,
+@@ -96,7 +96,7 @@ inline SummaryRow run_method(const Config& cfg,
+ 
+         if (trialsOut) {
+             const double err = er.estimate - exact;
+-            (*trialsOut) << k << ',' << to_string(method) << ',' << trial << ','
++            (*trialsOut) << k << ',' << to_string(method) << ',' << to_string(cfg.qmcBackend) << ',' << trial << ','
+                          << std::setprecision(17) << er.estimate << ',' << exact << ',' << err << ',' << err * err << ','
+                          << er.meanSteps << ',' << er.maxStepsSeen << ',' << er.truncatedCount << ',' << trialMs << '\n';
+         }
+diff --git a/include/wost_toy/cli.hpp b/include/wost_toy/cli.hpp
+index c746390..65e4f7b 100644
+--- a/include/wost_toy/cli.hpp
++++ b/include/wost_toy/cli.hpp
+@@ -48,6 +48,7 @@ R"(mixed_boundary_benchmark options:
+   --out PATH                 summary CSV path [results/summary.csv]
+   --out-trials PATH          optional per-trial CSV path
+   --methods LIST             comma list: all,mc,pathwise,step,full,bucket,block-bucket [all]
++  --qmc-backend NAME         simple,openqmc-sobol [simple]
+   --ks LIST                  comma list of k values [1,4,8,16]
+   --N INT                    walkers per estimate [1024]
+   --M INT                    independent randomizations [128]
+@@ -63,7 +64,7 @@ R"(mixed_boundary_benchmark options:
+   --help                     show this help
+ 
+ Example:
+-  mixed_boundary_benchmark --methods all --ks 1,4,8,16 --N 1024 --M 128 --out results/summary.csv
++  mixed_boundary_benchmark --qmc-backend openqmc-sobol --methods all --ks 1,4,8,16 --N 1024 --M 128 --out results/summary.csv
+ )";
+ }
+ 
+@@ -84,6 +85,13 @@ inline Config parse_args(int argc, char** argv) {
+             cfg.outTrials = need_value(arg);
+         } else if (arg == "--methods") {
+             cfg.methods = parse_method_list(need_value(arg));
++        } else if (arg == "--qmc-backend") {
++            QmcBackend backend;
++            const auto value = need_value(arg);
++            if (!parse_qmc_backend(value, backend)) {
++                throw std::runtime_error("unknown QMC backend: " + value);
++            }
++            cfg.qmcBackend = backend;
+         } else if (arg == "--ks") {
+             cfg.ks = parse_int_list(need_value(arg));
+         } else if (arg == "--N") {
+diff --git a/include/wost_toy/config.hpp b/include/wost_toy/config.hpp
+index 672bb60..f36c338 100644
+--- a/include/wost_toy/config.hpp
++++ b/include/wost_toy/config.hpp
+@@ -6,6 +6,25 @@
+ 
+ namespace wost {
+ 
++enum class QmcBackend {
++    Simple,
++    OpenQmcSobol
++};
++
++inline std::string to_string(QmcBackend b) {
++    switch (b) {
++    case QmcBackend::Simple: return "simple";
++    case QmcBackend::OpenQmcSobol: return "openqmc-sobol";
++    }
++    return "unknown";
++}
++
++inline bool parse_qmc_backend(const std::string& s, QmcBackend& out) {
++    if (s == "simple" || s == "legacy") { out = QmcBackend::Simple; return true; }
++    if (s == "openqmc-sobol" || s == "sobol" || s == "oqmc-sobol") { out = QmcBackend::OpenQmcSobol; return true; }
++    return false;
++}
++
+ enum class Method {
+     MC,
+     PathwiseRQMC,
+@@ -55,6 +74,7 @@ struct Config {
+     int blockSize = 256;
+ 
+     uint64_t seed = 12345;
++    QmcBackend qmcBackend = QmcBackend::Simple;
+     std::string outSummary = "results/summary.csv";
+     std::string outTrials = "";
+ };
+diff --git a/include/wost_toy/qmc.hpp b/include/wost_toy/qmc.hpp
+index ffc0963..2ca1cfb 100644
+--- a/include/wost_toy/qmc.hpp
++++ b/include/wost_toy/qmc.hpp
+@@ -1,12 +1,32 @@
+ #pragma once
+ 
++#include "wost_toy/config.hpp"
+ #include "wost_toy/math.hpp"
++#include "wost_toy/rng.hpp"
+ #include <algorithm>
++#include <array>
+ #include <cstdint>
++#include <stdexcept>
++#include <string>
+ #include <vector>
+ 
++#ifdef WOST_TOY_USE_OPENQMC
++#include <oqmc/sobol.h>
++#endif
++
+ namespace wost {
+ 
++inline uint64_t hash_combine(uint64_t seed, uint64_t a = 0, uint64_t b = 0, uint64_t c = 0,
++                             uint64_t d = 0, uint64_t e = 0) {
++    uint64_t x = seed;
++    x ^= 0x9E3779B97F4A7C15ull + a + (x << 6) + (x >> 2);
++    x ^= 0xBF58476D1CE4E5B9ull + b + (x << 6) + (x >> 2);
++    x ^= 0x94D049BB133111EBull + c + (x << 6) + (x >> 2);
++    x ^= 0xD2B74407B1CE6E93ull + d + (x << 6) + (x >> 2);
++    x ^= 0xCA5A826395121157ull + e + (x << 6) + (x >> 2);
++    return mix_u64(x);
++}
++
+ inline uint64_t reverse_bits64(uint64_t x) {
+     x = ((x & 0x5555555555555555ull) << 1) | ((x >> 1) & 0x5555555555555555ull);
+     x = ((x & 0x3333333333333333ull) << 2) | ((x >> 2) & 0x3333333333333333ull);
+@@ -54,11 +74,22 @@ inline std::vector<uint32_t> first_primes(std::size_t n) {
+     return primes;
+ }
+ 
+-inline double pathwise_halton_sample(uint64_t walkerIndex, int step, double shift) {
++inline double halton_dimension_sample(uint64_t sampleIndex, uint32_t dimension, double shift) {
+     static const std::vector<uint32_t> primes = first_primes(4096);
+-    const uint32_t base = primes[static_cast<std::size_t>(step) % primes.size()];
+-    // +1 avoids the all-zero first point.
+-    return frac(radical_inverse(walkerIndex + 1, base) + shift);
++    const uint32_t base = primes[static_cast<std::size_t>(dimension) % primes.size()];
++    return frac(radical_inverse(sampleIndex + 1, base) + shift);
++}
++
++inline double simple_lattice_dimension_sample(uint64_t sampleIndex, uint32_t dimension, double shift) {
++    // Cheap deterministic fallback used when OpenQMC is disabled. Dimension zero is
++    // base-2 VdC; dimension one is an irrational lattice; higher dimensions use
++    // Halton-style radical inverses. This backend is for development only.
++    if (dimension == 0) return rqmc_1d(sampleIndex, shift);
++    if (dimension == 1) {
++        constexpr double alpha = 0.75487766624669276005;
++        return frac((static_cast<double>(sampleIndex) + 0.5) * alpha + shift);
++    }
++    return halton_dimension_sample(sampleIndex, dimension, shift);
+ }
+ 
+ struct Point2 {
+@@ -67,11 +98,82 @@ struct Point2 {
+ };
+ 
+ inline Point2 rqmc_2d(uint64_t index, double shift0, double shift1) {
+-    // A simple 2D point set: first coord is base-2 VdC, second is irrational lattice.
+-    // This is intentionally dependency-free. For production, replace with OpenQMC/Sobol.
+-    constexpr double alpha = 0.75487766624669276005; // sqrt(2)-style irrational fractional constant
+-    return Point2{ frac(van_der_corput_base2(index) + shift0),
+-                   frac((static_cast<double>(index) + 0.5) * alpha + shift1) };
++    return Point2{ simple_lattice_dimension_sample(index, 0, shift0),
++                   simple_lattice_dimension_sample(index, 1, shift1) };
++}
++
++struct QmcRequest {
++    uint64_t domainKey = 0;
++    uint64_t sampleIndex = 0;
++    uint32_t dimension = 0;
++};
++
++class QmcEngine {
++public:
++    explicit QmcEngine(QmcBackend backend = QmcBackend::Simple) : backend_(backend) {
++#ifndef WOST_TOY_USE_OPENQMC
++        if (backend_ == QmcBackend::OpenQmcSobol) {
++            throw std::runtime_error("--qmc-backend openqmc-sobol requested, but this binary was built without WOST_TOY_USE_OPENQMC=ON");
++        }
++#endif
++    }
++
++    QmcBackend backend() const { return backend_; }
++
++    double sample1d(const QmcRequest& req) const {
++        switch (backend_) {
++        case QmcBackend::Simple:
++            return sample1d_simple(req);
++        case QmcBackend::OpenQmcSobol:
++            return sample1d_openqmc_sobol(req);
++        }
++        return sample1d_simple(req);
++    }
++
++    Point2 sample2d(uint64_t domainKey, uint64_t sampleIndex) const {
++        return Point2{ sample1d(QmcRequest{domainKey, sampleIndex, 0u}),
++                       sample1d(QmcRequest{domainKey, sampleIndex, 1u}) };
++    }
++
++private:
++    double sample1d_simple(const QmcRequest& req) const {
++        const double shift = hashed_unit(req.domainKey, static_cast<uint64_t>(req.dimension));
++        return simple_lattice_dimension_sample(req.sampleIndex, req.dimension, shift);
++    }
++
++    double sample1d_openqmc_sobol(const QmcRequest& req) const {
++#ifdef WOST_TOY_USE_OPENQMC
++        // OpenQMC domains provide four high-quality dimensions. For dimensions
++        // beyond 3, derive a child domain per 4D block. Pathwise RQMC therefore
++        // remains a high-dimensional Sobol baseline, while bucketed RQMC can
++        // keep dimension small by assigning a fresh domain per (step, bucket).
++        const uint64_t mixed = hash_combine(req.domainKey, req.dimension / 4u);
++        const int x = static_cast<int>(mixed & 0x7fffffffu);
++        const int y = static_cast<int>((mixed >> 32) & 0x7fffffffu);
++        const int frame = static_cast<int>((mixed >> 17) & 0x7fffffffu);
++        const int index = static_cast<int>(req.sampleIndex & 0x7fffffffu);
++        const int localDim = static_cast<int>(req.dimension % 4u);
++
++        oqmc::SobolSampler domain(x, y, frame, index, nullptr);
++        float sample[4];
++        domain.drawSample<4>(sample);
++        double u = static_cast<double>(sample[localDim]);
++        // Be defensive about exact 1.0 if an implementation ever returns it.
++        if (u >= 1.0) u = std::nextafter(1.0, 0.0);
++        if (u < 0.0) u = 0.0;
++        return u;
++#else
++        (void)req;
++        throw std::runtime_error("OpenQMC Sobol backend was not compiled in");
++#endif
++    }
++
++    QmcBackend backend_ = QmcBackend::Simple;
++};
++
++inline uint64_t qmc_domain_key(uint64_t seed, uint64_t methodTag, uint64_t trial,
++                               uint64_t step, uint64_t bucket, uint64_t extra = 0) {
++    return hash_combine(seed, methodTag, trial, step, bucket, extra);
+ }
+ 
+ } // namespace wost
+diff --git a/include/wost_toy/samplers.hpp b/include/wost_toy/samplers.hpp
+index 4bd2eeb..57d516c 100644
+--- a/include/wost_toy/samplers.hpp
++++ b/include/wost_toy/samplers.hpp
+@@ -22,7 +22,7 @@ public:
+     virtual void begin_trial(int trial, uint64_t seed, const Config& cfg) {
+         trial_ = trial;
+         seed_ = seed;
+-        (void)cfg;
++        qmc_ = QmcEngine(cfg.qmcBackend);
+     }
+     virtual void assign(int step,
+                         const MixedStripDomain& domain,
+@@ -33,6 +33,7 @@ public:
+ protected:
+     int trial_ = 0;
+     uint64_t seed_ = 0;
++    QmcEngine qmc_{};
+ };
+ 
+ class MCSampler final : public StepSampler {
+@@ -55,11 +56,13 @@ class PathwiseRQMCSampler final : public StepSampler {
+ public:
+     const char* name() const override { return "pathwise-rqmc"; }
+     void assign(int step, const MixedStripDomain&, const Config&, std::vector<WalkerState>& walkers, std::vector<double>& u_dir) override {
+-        const double shift = hashed_unit(seed_, 0x1000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
++        // Pathwise RQMC: one high-dimensional QMC point per walker.
++        // The step id becomes the QMC dimension. This is the strong baseline
++        // against which bucketed low-dimensional domains are compared.
++        const uint64_t domain = qmc_domain_key(seed_, 0x1000u, static_cast<uint64_t>(trial_), 0, 0);
+         for (std::size_t i = 0; i < walkers.size(); ++i) {
+             if (walkers[i].alive) {
+-                // Fixed walker index drives the path dimension. This is a cheap pathwise RQMC baseline.
+-                u_dir[i] = pathwise_halton_sample(static_cast<uint64_t>(i), step, shift);
++                u_dir[i] = qmc_.sample1d(QmcRequest{domain, static_cast<uint64_t>(i), static_cast<uint32_t>(step)});
+             }
+         }
+     }
+@@ -69,11 +72,11 @@ class StepRQMCNoSortSampler final : public StepSampler {
+ public:
+     const char* name() const override { return "step-rqmc-no-sort"; }
+     void assign(int step, const MixedStripDomain&, const Config&, std::vector<WalkerState>& walkers, std::vector<double>& u_dir) override {
+-        const double shift = hashed_unit(seed_, 0x2000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
++        const uint64_t domain = qmc_domain_key(seed_, 0x2000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step), 0);
+         uint64_t local = 0;
+         for (std::size_t i = 0; i < walkers.size(); ++i) {
+             if (walkers[i].alive) {
+-                u_dir[i] = rqmc_1d(local++, shift);
++                u_dir[i] = qmc_.sample1d(QmcRequest{domain, local++, 0u});
+             }
+         }
+     }
+@@ -85,9 +88,9 @@ public:
+     void assign(int step, const MixedStripDomain& domain, const Config& cfg, std::vector<WalkerState>& walkers, std::vector<double>& u_dir) override {
+         if (cfg.groupEvery > 1 && (step % cfg.groupEvery) != 0) {
+             // Cheap fallback between grouping steps.
+-            const double shift = hashed_unit(seed_, 0x2F00u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
++            const uint64_t domainKey = qmc_domain_key(seed_, 0x2F00u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step), 0);
+             for (std::size_t i = 0; i < walkers.size(); ++i) {
+-                if (walkers[i].alive) u_dir[i] = rqmc_1d(static_cast<uint64_t>(i), shift);
++                if (walkers[i].alive) u_dir[i] = qmc_.sample1d(QmcRequest{domainKey, static_cast<uint64_t>(i), 0u});
+             }
+             return;
+         }
+@@ -105,10 +108,9 @@ public:
+ 
+         const std::size_t n = active_.size();
+         points_.resize(n);
+-        const double shift0 = hashed_unit(seed_, 0x3000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step), 0);
+-        const double shift1 = hashed_unit(seed_, 0x3001u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step), 1);
++        const uint64_t domainKey = qmc_domain_key(seed_, 0x3000u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step), 0);
+         for (std::size_t j = 0; j < n; ++j) {
+-            points_[j] = rqmc_2d(static_cast<uint64_t>(j), shift0, shift1);
++            points_[j] = qmc_.sample2d(domainKey, static_cast<uint64_t>(j));
+         }
+         std::sort(points_.begin(), points_.end(), [](const Point2& a, const Point2& b) {
+             return a.x < b.x;
+@@ -129,9 +131,9 @@ public:
+ 
+     void assign(int step, const MixedStripDomain& domain, const Config& cfg, std::vector<WalkerState>& walkers, std::vector<double>& u_dir) override {
+         if (cfg.groupEvery > 1 && (step % cfg.groupEvery) != 0) {
+-            const double shift = hashed_unit(seed_, 0x3F00u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step));
++            const uint64_t domainKey = qmc_domain_key(seed_, 0x3F00u, static_cast<uint64_t>(trial_), static_cast<uint64_t>(step), 0);
+             for (std::size_t i = 0; i < walkers.size(); ++i) {
+-                if (walkers[i].alive) u_dir[i] = rqmc_1d(static_cast<uint64_t>(i), shift);
++                if (walkers[i].alive) u_dir[i] = qmc_.sample1d(QmcRequest{domainKey, static_cast<uint64_t>(i), 0u});
+             }
+             return;
+         }
+@@ -170,13 +172,14 @@ private:
+                         const std::vector<std::vector<int>>& buckets,
+                         std::vector<double>& u_dir,
+                         uint64_t block = 0) {
++        (void)cfg;
+         for (std::size_t b = 0; b < buckets.size(); ++b) {
+             const auto& indices = buckets[b];
+             if (indices.empty()) continue;
+-            const double shift = hashed_unit(seed_, 0x4000u + block, static_cast<uint64_t>(trial_),
+-                                             static_cast<uint64_t>(step), static_cast<uint64_t>(b));
++            const uint64_t domainKey = qmc_domain_key(seed_, 0x4000u + block, static_cast<uint64_t>(trial_),
++                                                       static_cast<uint64_t>(step), static_cast<uint64_t>(b));
+             for (std::size_t j = 0; j < indices.size(); ++j) {
+-                u_dir[static_cast<std::size_t>(indices[j])] = rqmc_1d(static_cast<uint64_t>(j), shift);
++                u_dir[static_cast<std::size_t>(indices[j])] = qmc_.sample1d(QmcRequest{domainKey, static_cast<uint64_t>(j), 0u});
+             }
+         }
+     }
+diff --git a/scripts/run_openqmc_sobol.ps1 b/scripts/run_openqmc_sobol.ps1
+new file mode 100644
+index 0000000..c855d74
+--- /dev/null
++++ b/scripts/run_openqmc_sobol.ps1
+@@ -0,0 +1,19 @@
++$Exe = "build\Release\mixed_boundary_benchmark.exe"
++if (!(Test-Path $Exe)) { $Exe = "build\mixed_boundary_benchmark.exe" }
++
++& $Exe `
++  --qmc-backend openqmc-sobol `
++  --methods mc,pathwise,step,full,bucket,block-bucket `
++  --ks 1,4,8,16 `
++  --N 1024 `
++  --M 512 `
++  --x0 0.65 `
++  --y0 0.37 `
++  --phase-bins 16 `
++  --dist-bins 1 `
++  --group-every 1 `
++  --block-size 128 `
++  --out results\summary_x065_M512_openqmc_sobol.csv `
++  --out-trials results\trials_x065_M512_openqmc_sobol.csv
++
++python scripts\plot_results.py results\summary_x065_M512_openqmc_sobol.csv --out-dir results\plots_x065_M512_openqmc_sobol

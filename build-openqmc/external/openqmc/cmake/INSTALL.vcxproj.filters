@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\sy415\workspace\WoStToy\build-openqmc\CMakeFiles\ef1f6dc17636e5c22e5eb20363b137d6\INSTALL_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{5E94FD7E-0A16-3D6D-A8F9-D8C0DE3750EF}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
